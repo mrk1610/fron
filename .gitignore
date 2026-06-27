@@ -28,3 +28,4 @@ verify-*.mjs
 # IDE (optional)
 .vscode/
 .idea/.claude/
+.vercel
