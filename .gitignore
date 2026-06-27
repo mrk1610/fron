@@ -27,4 +27,4 @@ verify-*.mjs
 
 # IDE (optional)
 .vscode/
-.idea/
+.idea/.claude/
