@@ -18,6 +18,7 @@ export async function fetchProfile(userId: string): Promise<CandidateProfile | n
   };
 }
 
+// Bug #2: Write functions now throw on error so callers can detect and handle failures
 export async function upsertProfile(userId: string, profile: CandidateProfile): Promise<void> {
   const { error } = await supabase.from("profiles").upsert({
     id: userId,
@@ -30,7 +31,7 @@ export async function upsertProfile(userId: string, profile: CandidateProfile): 
     achievements: profile.achievements,
     updated_at: new Date().toISOString(),
   });
-  if (error) console.error("upsertProfile error:", error);
+  if (error) throw error;
 }
 
 export async function fetchResumes(userId: string): Promise<Resume[]> {
@@ -62,12 +63,12 @@ export async function insertResume(userId: string, resume: Resume): Promise<void
     template: resume.template,
     updated_at: resume.updatedAt,
   });
-  if (error) console.error("insertResume error:", error);
+  if (error) throw error;
 }
 
 export async function deleteResume(resumeId: string): Promise<void> {
   const { error } = await supabase.from("resumes").delete().eq("id", resumeId);
-  if (error) console.error("deleteResume error:", error);
+  if (error) throw error;
 }
 
 export async function fetchApplications(userId: string): Promise<JobApplication[]> {
@@ -105,10 +106,10 @@ export async function upsertApplication(userId: string, app: JobApplication): Pr
     job_url: app.jobUrl || null,
     associated_resume_id: app.associatedResumeId || null,
   });
-  if (error) console.error("upsertApplication error:", error);
+  if (error) throw error;
 }
 
 export async function deleteApplication(appId: string): Promise<void> {
   const { error } = await supabase.from("job_applications").delete().eq("id", appId);
-  if (error) console.error("deleteApplication error:", error);
+  if (error) throw error;
 }

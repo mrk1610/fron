@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 import { supabase } from "./lib/supabase";
 import * as db from "./lib/db";
@@ -43,6 +43,12 @@ export default function App() {
   const [selectedGalleryTemplateId, setSelectedGalleryTemplateId] = useState<string>("");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
+  // Bug #11: track current user ID in a ref so onAuthStateChange can detect re-auth vs new sign-in
+  const currentUserIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    currentUserIdRef.current = user?.id ?? null;
+  }, [user]);
+
   const loadUserData = async (userId: string) => {
     const [profile, userResumes, userApps] = await Promise.all([
       db.fetchProfile(userId),
@@ -86,7 +92,7 @@ export default function App() {
     if (!isSettingUpProfile && !isInitializing) {
       window.history.pushState({ tab: activeTab }, "", `?tab=${activeTab}`);
     }
-  }, [activeTab]);
+  }, [activeTab, isSettingUpProfile, isInitializing]);
 
   useEffect(() => {
     if (selectedResumeForPreview) {
@@ -96,19 +102,32 @@ export default function App() {
 
   useEffect(() => {
     // Check for existing session on mount
+    // Bug #1: ensure setIsInitializing(false) always runs even if loadUserData throws
     supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (session?.user) {
-        setUser(mapUser(session.user));
-        await loadUserData(session.user.id);
+      try {
+        if (session?.user) {
+          setUser(mapUser(session.user));
+          await loadUserData(session.user.id);
+        }
+      } catch (err) {
+        console.error("Failed to load user data on session restore:", err);
+      } finally {
+        setIsInitializing(false);
       }
-      setIsInitializing(false);
     });
 
     // Listen for future auth changes (sign in, sign out, token refresh)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === "SIGNED_IN" && session?.user) {
         setUser(mapUser(session.user));
-        await loadUserData(session.user.id);
+        // Bug #11: skip redundant loadUserData when signInWithPassword re-auth fires SIGNED_IN
+        if (session.user.id !== currentUserIdRef.current) {
+          try {
+            await loadUserData(session.user.id);
+          } catch (err) {
+            console.error("Failed to load user data on sign in:", err);
+          }
+        }
       } else if (event === "SIGNED_OUT") {
         setUser(null);
         setMasterProfile(null);
@@ -142,14 +161,30 @@ export default function App() {
   };
 
   const handleSaveMasterProfile = async (profile: CandidateProfile) => {
+    // Bug #2: DB write first — don't close setup UI if save fails
+    if (user) {
+      try {
+        await db.upsertProfile(user.id, profile);
+      } catch {
+        alert("Failed to save profile. Please try again.");
+        return;
+      }
+    }
     setMasterProfile(profile);
-    if (user) await db.upsertProfile(user.id, profile);
     setIsSettingUpProfile(false);
   };
 
   const handleSaveNewResume = async (newResume: Resume) => {
+    // Bug #4: persist to DB first — prevent ghost resume if DB write fails
+    if (user) {
+      try {
+        await db.insertResume(user.id, newResume);
+      } catch {
+        alert("Failed to save resume. Please try again.");
+        return;
+      }
+    }
     setResumes(prev => [newResume, ...prev]);
-    if (user) await db.insertResume(user.id, newResume);
     setActiveTab("dashboard");
     setSelectedResumeForPreview(null);
   };
@@ -164,22 +199,40 @@ export default function App() {
 
   const handleDeleteResume = async (id: string) => {
     if (confirm("Are you sure you want to delete this resume variation?")) {
-      setResumes(prev => prev.filter(r => r.id !== id));
-      await db.deleteResume(id);
+      // Bug #2: DB first, then remove from UI — no phantom entries on failure
+      try {
+        await db.deleteResume(id);
+        setResumes(prev => prev.filter(r => r.id !== id));
+      } catch {
+        alert("Failed to delete resume. Please try again.");
+      }
     }
   };
 
   const handleUpsertApplication = async (app: JobApplication) => {
+    const previous = applications;
     setApplications(prev => {
       const exists = prev.some(a => a.id === app.id);
       return exists ? prev.map(a => a.id === app.id ? app : a) : [app, ...prev];
     });
-    if (user) await db.upsertApplication(user.id, app);
+    if (user) {
+      try {
+        await db.upsertApplication(user.id, app);
+      } catch {
+        setApplications(previous);
+        alert("Failed to save application. Please try again.");
+      }
+    }
   };
 
   const handleDeleteApplication = async (id: string) => {
-    setApplications(prev => prev.filter(a => a.id !== id));
-    await db.deleteApplication(id);
+    // Bug #2: DB first, then remove from UI
+    try {
+      await db.deleteApplication(id);
+      setApplications(prev => prev.filter(a => a.id !== id));
+    } catch {
+      alert("Failed to delete application. Please try again.");
+    }
   };
 
   // Loading screen while checking session

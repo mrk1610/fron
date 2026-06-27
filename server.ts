@@ -10,6 +10,15 @@ const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 const RATE_LIMIT_MAX = 10;
 const RATE_LIMIT_WINDOW_MS = 60_000;
 
+// Bug #13: use X-Forwarded-For to get real client IP behind a reverse proxy
+function getClientIp(req: ReturnType<typeof express>["request"] & { headers: Record<string, string | string[] | undefined>; socket: { remoteAddress?: string } }): string {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (typeof forwarded === "string") {
+    return forwarded.split(",")[0].trim();
+  }
+  return req.socket.remoteAddress || "unknown";
+}
+
 function checkRateLimit(ip: string): boolean {
   const now = Date.now();
   const entry = rateLimitMap.get(ip);
@@ -46,12 +55,14 @@ async function startServer() {
 
   // Endpoint 2: Tailor Resume with AI based on Candidate Profile and Job Description/PDF
   app.post("/api/generate-resume", async (req, res) => {
-    const ip = req.ip || req.socket.remoteAddress || "unknown";
+    const ip = getClientIp(req as any);
     if (!checkRateLimit(ip)) {
       return res.status(429).json({ success: false, error: "Rate limit exceeded. Please wait a minute before trying again." });
     }
     try {
       const { profile, jdText, pdfFile, customPrompt } = req.body;
+      const safeJdText = (jdText || "").slice(0, 10000);
+      const safeCustomPrompt = (customPrompt || "").slice(0, 500);
       const aiClient = getGeminiClient();
 
       if (!aiClient) {
@@ -73,18 +84,6 @@ async function startServer() {
       }
 
       // Prepare Gemini prompts
-      let contents: any[] = [];
-
-      // Include PDF attachment if provided
-      if (pdfFile && pdfFile.data && pdfFile.mimeType) {
-        contents.push({
-          inlineData: {
-            mimeType: pdfFile.mimeType,
-            data: pdfFile.data
-          }
-        });
-      }
-
       const promptText = `
 You are a world-class ATS (Applicant Tracking System) optimization expert and professional resume writer.
 Your SOLE objective is to maximize the candidate's ATS match score against the provided Job Description while keeping all content truthful and grounded in their real experience.
@@ -94,10 +93,10 @@ CANDIDATE PROFILE:
 ${JSON.stringify(profile, null, 2)}
 
 JOB DESCRIPTION:
-${jdText || "No JD provided — optimize for professional best practices."}
+${safeJdText || "No JD provided — optimize for professional best practices."}
 
 CUSTOM INSTRUCTIONS:
-${customPrompt || "Maximize ATS keyword alignment and achievement impact."}
+${safeCustomPrompt || "Maximize ATS keyword alignment and achievement impact."}
 ═══════════════════════════════════════════════════
 
 STEP 1 — KEYWORD EXTRACTION (do this internally first):
@@ -203,25 +202,37 @@ JSON Response Shape:
 }
       `;
 
-      contents.push(promptText);
+      // Bug #12: use proper Gemini SDK Part format for mixed content (PDF + text)
+      const parts: any[] = [];
+      if (pdfFile && pdfFile.data && pdfFile.mimeType) {
+        parts.push({ inlineData: { mimeType: pdfFile.mimeType, data: pdfFile.data } });
+      }
+      parts.push({ text: promptText });
 
       // Call Gemini API (using gemini-2.5-flash as recommended)
       const response = await aiClient.models.generateContent({
         model: "gemini-2.5-flash",
-        contents: contents,
+        contents: [{ role: "user", parts }],
         config: {
           responseMimeType: "application/json"
         }
       });
 
-      const responseText = response.text || "";
-      // Clean potential JSON markdown wrapper if models return them despite responseMimeType
+      // Bug #10: response.text can be undefined when Gemini blocks output
+      const responseText = response.text;
+      if (!responseText) {
+        throw new Error("Gemini returned an empty response. The request may have been blocked by safety filters or exceeded token limits.");
+      }
+
+      // Bug #7: handle both ```json and plain ``` fences
       let cleanText = responseText.trim();
       if (cleanText.startsWith("```json")) {
-        cleanText = cleanText.substring(7);
+        cleanText = cleanText.slice(7);
+      } else if (cleanText.startsWith("```")) {
+        cleanText = cleanText.slice(3);
       }
       if (cleanText.endsWith("```")) {
-        cleanText = cleanText.substring(0, cleanText.length - 3);
+        cleanText = cleanText.slice(0, -3);
       }
       cleanText = cleanText.trim();
 
@@ -239,7 +250,7 @@ JSON Response Shape:
 
   // Endpoint 3: Analyze Resume & Suggest Improvements
   app.post("/api/analyze-resume", async (req, res) => {
-    const ip = req.ip || req.socket.remoteAddress || "unknown";
+    const ip = getClientIp(req as any);
     if (!checkRateLimit(ip)) {
       return res.status(429).json({ success: false, error: "Rate limit exceeded. Please wait a minute before trying again." });
     }

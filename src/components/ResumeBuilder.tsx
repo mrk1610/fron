@@ -85,6 +85,10 @@ export default function ResumeBuilder({
       setTargetJobTitle(sanitizedName);
       setResumeTitle(`Tailored Resume - ${sanitizedName}`);
     };
+    // Bug #8: handle file read errors with user feedback
+    reader.onerror = () => {
+      alert("Failed to read the file. Please try a different file.");
+    };
     reader.readAsDataURL(file);
   };
 
@@ -116,10 +120,12 @@ export default function ResumeBuilder({
     setIsGenerating(true);
     setStatusMessage("Ingesting reference job description...");
 
-
-    setTimeout(() => setStatusMessage("Analyzing Master Resume details..."), 1200);
-    setTimeout(() => setStatusMessage("Gemini is matching professional vocabulary keywords..."), 2400);
-    setTimeout(() => setStatusMessage("Revising accomplishments with active metrics..."), 3600);
+    // Bug #9: store timeout IDs so they can be cleared if generation finishes early
+    const statusTimeouts = [
+      setTimeout(() => setStatusMessage("Analyzing Master Resume details..."), 1200),
+      setTimeout(() => setStatusMessage("Gemini is matching professional vocabulary keywords..."), 2400),
+      setTimeout(() => setStatusMessage("Revising accomplishments with active metrics..."), 3600),
+    ];
 
     try {
       const payload = {
@@ -137,8 +143,10 @@ export default function ResumeBuilder({
         body: JSON.stringify(payload)
       });
 
+      // Bug #6: surface the server's actual error message (e.g. rate limit text) instead of generic one
       if (!response.ok) {
-        throw new Error("Failed to contact tailoring engine");
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || `Server error (${response.status})`);
       }
 
       const result = await response.json();
@@ -173,6 +181,7 @@ export default function ResumeBuilder({
       setGeneratedProfile(fallbackResult);
       setIsFallback(true);
     } finally {
+      statusTimeouts.forEach(clearTimeout);
       setIsGenerating(false);
       setStatusMessage("");
     }
