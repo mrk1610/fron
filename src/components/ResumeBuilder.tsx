@@ -49,6 +49,10 @@ export default function ResumeBuilder({
     return () => { abortControllerRef.current?.abort(); };
   }, []);
 
+  // Synchronous ref prevents two same-tick clicks (e.g. header + sidebar save buttons) from
+  // both passing the isSaving guard before React re-renders with isSaving=true
+  const isSavingRef = useRef(false);
+
   // Synchronize preset inputs
   React.useEffect(() => {
     if (initialTemplateId) {
@@ -203,7 +207,8 @@ export default function ResumeBuilder({
 
   // Bug #4: async + isSaving guard prevents double-click from firing two DB inserts
   const handleSaveToDashboard = async () => {
-    if (!generatedProfile || isSaving) return;
+    if (!generatedProfile || isSavingRef.current) return;
+    isSavingRef.current = true;
     setIsSaving(true);
     try {
       const finalResume: Resume = {
@@ -217,6 +222,7 @@ export default function ResumeBuilder({
       };
       await onSaveResume(finalResume);
     } finally {
+      isSavingRef.current = false;
       setIsSaving(false);
     }
   };

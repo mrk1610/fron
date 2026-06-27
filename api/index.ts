@@ -289,11 +289,15 @@ Return your answer strictly in JSON structure:
       throw new Error("Gemini returned an empty response.");
     }
 
-    const data = JSON.parse(responseText);
+    let data: any;
+    try {
+      data = JSON.parse(responseText);
+    } catch {
+      throw new Error("Gemini returned a response that could not be parsed as JSON.");
+    }
     res.json({ success: true, suggestions: data.suggestions });
   } catch (error: any) {
     console.error("Gemini analysis error:", error);
-    // Bug #8: surface the real error message instead of a hardcoded generic string
     res.status(500).json({ success: false, error: error.message || "Failed to analyze resume" });
   }
 });

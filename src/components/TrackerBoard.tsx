@@ -8,7 +8,7 @@ import {
 interface TrackerBoardProps {
   applications: JobApplication[];
   resumes: Resume[];
-  onUpsertApp: (app: JobApplication) => void;
+  onUpsertApp: (app: JobApplication) => Promise<void>;
   onDeleteApp: (id: string) => void;
 }
 
@@ -20,6 +20,7 @@ export default function TrackerBoard({
 }: TrackerBoardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [selectedApp, setSelectedApp] = useState<Partial<JobApplication> | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   const statuses = [
     { key: ApplicationStatus.Bookmarked, label: "Bookmarked", color: "bg-blue-50 text-blue-700 border-blue-200" },
@@ -50,14 +51,19 @@ export default function TrackerBoard({
     setIsEditing(true);
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (selectedApp && selectedApp.jobTitle && selectedApp.company) {
-      onUpsertApp(selectedApp as JobApplication);
+    if (!selectedApp || !selectedApp.jobTitle || !selectedApp.company) {
+      alert("Please provide both Job Title and Company.");
+      return;
+    }
+    setIsSaving(true);
+    try {
+      await onUpsertApp(selectedApp as JobApplication);
       setIsEditing(false);
       setSelectedApp(null);
-    } else {
-      alert("Please provide both Job Title and Company.");
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -347,9 +353,10 @@ export default function TrackerBoard({
                 </button>
                 <button
                   type="submit"
-                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-4 py-2 rounded-sm cursor-pointer shadow-sm transition"
+                  disabled={isSaving}
+                  className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white font-bold text-xs px-4 py-2 rounded-sm cursor-pointer shadow-sm transition"
                 >
-                  Record Item
+                  {isSaving ? "Saving..." : "Record Item"}
                 </button>
               </div>
             </form>

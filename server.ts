@@ -86,6 +86,11 @@ async function startServer() {
         return res.json({ success: true, data: tailoredProfileNote });
       }
 
+      const profileJson = JSON.stringify(profile || {}, null, 2);
+      if (profileJson.length > 60000) {
+        return res.status(400).json({ success: false, error: "Profile is too large. Please reduce the number of entries and try again." });
+      }
+
       // Prepare Gemini prompts
       const promptText = `
 You are a world-class ATS (Applicant Tracking System) optimization expert and professional resume writer.
@@ -285,15 +290,25 @@ Return your answer strictly in JSON structure:
 
       const response = await aiClient.models.generateContent({
         model: "gemini-2.5-flash",
-        contents: promptText,
+        contents: [{ role: "user", parts: [{ text: promptText }] }],
         config: { responseMimeType: "application/json" }
       });
 
-      const data = JSON.parse(response.text || "{\"suggestions\":[]}");
+      const responseText = response.text;
+      if (!responseText) {
+        throw new Error("Gemini returned an empty response.");
+      }
+
+      let data: any;
+      try {
+        data = JSON.parse(responseText);
+      } catch {
+        throw new Error("Gemini returned a response that could not be parsed as JSON.");
+      }
       res.json({ success: true, suggestions: data.suggestions });
     } catch (error: any) {
       console.error("Gemini analysis error:", error);
-      res.status(500).json({ success: false, error: "Failed to analyze resume" });
+      res.status(500).json({ success: false, error: error.message || "Failed to analyze resume" });
     }
   });
 
