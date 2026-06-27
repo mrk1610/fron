@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build output
+build/
+dist/
+
+# Coverage
+coverage/
+
+# Environment variables
+.env*
+!.env.example
+
+# Claude Code
+.claude/
+
+# Temporary test/debug scripts
+test-*.mjs
+verify-*.mjs
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+
+# IDE (optional)
+.vscode/
+.idea/
