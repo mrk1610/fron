@@ -180,19 +180,20 @@ export default function App() {
     setIsSettingUpProfile(false);
   };
 
-  const handleSaveNewResume = async (newResume: Resume) => {
-    // Bug #4: persist to DB first — prevent ghost resume if DB write fails
+  // Bug #2: returns false on failure so callers know not to clear dependent state
+  const handleSaveNewResume = async (newResume: Resume): Promise<boolean> => {
     if (user) {
       try {
         await db.insertResume(user.id, newResume);
       } catch {
         alert("Failed to save resume. Please try again.");
-        return;
+        return false;
       }
     }
     setResumes(prev => [newResume, ...prev]);
     setActiveTab("dashboard");
     setSelectedResumeForPreview(null);
+    return true;
   };
 
   const handleRetailor = (res: Resume) => {
@@ -215,20 +216,20 @@ export default function App() {
     }
   };
 
+  // Bug #5: DB-first to avoid stale-snapshot rollback overwriting concurrent updates
   const handleUpsertApplication = async (app: JobApplication) => {
-    const previous = applications;
-    setApplications(prev => {
-      const exists = prev.some(a => a.id === app.id);
-      return exists ? prev.map(a => a.id === app.id ? app : a) : [app, ...prev];
-    });
     if (user) {
       try {
         await db.upsertApplication(user.id, app);
       } catch {
-        setApplications(previous);
         alert("Failed to save application. Please try again.");
+        return;
       }
     }
+    setApplications(prev => {
+      const exists = prev.some(a => a.id === app.id);
+      return exists ? prev.map(a => a.id === app.id ? app : a) : [app, ...prev];
+    });
   };
 
   const handleDeleteApplication = async (id: string) => {
@@ -570,11 +571,13 @@ export default function App() {
               masterProfile={masterProfile}
               resumes={resumes}
               onSaveResume={async (newRes) => {
-                // Bug #4: await so presets are only cleared after a successful DB save
-                await handleSaveNewResume(newRes);
-                setSelectedJobPreset("");
-                setSelectedPromptPreset("");
-                setSelectedGalleryTemplateId("");
+                // Bug #2: only clear presets if the save actually succeeded
+                const saved = await handleSaveNewResume(newRes);
+                if (saved) {
+                  setSelectedJobPreset("");
+                  setSelectedPromptPreset("");
+                  setSelectedGalleryTemplateId("");
+                }
               }}
               onBackToDashboard={() => {
                 setActiveTab("dashboard");

@@ -8,13 +8,6 @@ const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 const RATE_LIMIT_MAX = 10;
 const RATE_LIMIT_WINDOW_MS = 60_000;
 
-// Bug #9: prune stale entries every 5 minutes to prevent unbounded map growth
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, entry] of rateLimitMap) {
-    if (now > entry.resetAt) rateLimitMap.delete(key);
-  }
-}, 5 * 60_000);
 
 // Bug #2: use x-real-ip (Vercel's trusted header) or the LAST entry of X-Forwarded-For
 // (Vercel appends the real IP at the end — taking the first entry is client-spoofable)
@@ -84,8 +77,8 @@ app.post("/api/generate-resume", async (req, res) => {
       return res.json({ success: true, data: tailoredProfileNote });
     }
 
-    // Bug #6: also limit profile size — large profiles blow the Gemini token budget
-    const profileJson = JSON.stringify(profile || {});
+    // Bug #3: use pretty-printed JSON for size check — matches what's embedded in the prompt
+    const profileJson = JSON.stringify(profile || {}, null, 2);
     if (profileJson.length > 60000) {
       return res.status(400).json({ success: false, error: "Profile is too large. Please reduce the number of entries and try again." });
     }

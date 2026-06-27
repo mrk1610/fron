@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { CandidateProfile, Resume } from "../types";
 import { 
   Sparkles, FileText, Upload, Copy, Palette, Edit, FileDown, ArrowLeft, 
@@ -9,7 +9,7 @@ import ResumeTemplates from "./ResumeTemplates";
 interface ResumeBuilderProps {
   masterProfile: CandidateProfile;
   resumes: Resume[];
-  onSaveResume: (newResume: Resume) => void;
+  onSaveResume: (newResume: Resume) => Promise<void> | void;
   onBackToDashboard: () => void;
   initialJobTarget?: string;
   initialCustomPrompt?: string;
@@ -41,6 +41,13 @@ export default function ResumeBuilder({
   const [targetCompany, setTargetCompany] = useState("");
   const [isLiveEditing, setIsLiveEditing] = useState(false);
   const [isFallback, setIsFallback] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Bug #1: store AbortController in ref so useEffect cleanup can call abort() on unmount
+  const abortControllerRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    return () => { abortControllerRef.current?.abort(); };
+  }, []);
 
   // Synchronize preset inputs
   React.useEffect(() => {
@@ -128,8 +135,8 @@ export default function ResumeBuilder({
       setTimeout(() => setStatusMessage("Revising accomplishments with active metrics..."), 3600),
     ];
 
-    // Bug #5: AbortController so fetch is cancelled if component unmounts mid-request
     const abortController = new AbortController();
+    abortControllerRef.current = abortController;
 
     try {
       const payload = {
@@ -194,18 +201,24 @@ export default function ResumeBuilder({
     }
   };
 
-  const handleSaveToDashboard = () => {
-    if (!generatedProfile) return;
-    const finalResume: Resume = {
-      id: crypto.randomUUID(),
-      title: resumeTitle || "Tailored Custom Resume",
-      targetJobTitle: targetJobTitle || "Target Position",
-      targetCompany: targetCompany || "Target Employer",
-      profile: generatedProfile,
-      template: selectedTemplate,
-      updatedAt: new Date().toLocaleDateString()
-    };
-    onSaveResume(finalResume);
+  // Bug #4: async + isSaving guard prevents double-click from firing two DB inserts
+  const handleSaveToDashboard = async () => {
+    if (!generatedProfile || isSaving) return;
+    setIsSaving(true);
+    try {
+      const finalResume: Resume = {
+        id: crypto.randomUUID(),
+        title: resumeTitle || "Tailored Custom Resume",
+        targetJobTitle: targetJobTitle || "Target Position",
+        targetCompany: targetCompany || "Target Employer",
+        profile: generatedProfile,
+        template: selectedTemplate,
+        updatedAt: new Date().toLocaleDateString()
+      };
+      await onSaveResume(finalResume);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleTriggerPrint = () => {
@@ -244,7 +257,8 @@ export default function ResumeBuilder({
             </button>
             <button
               onClick={handleSaveToDashboard}
-              className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-4 py-1.5 rounded-sm transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+              disabled={isSaving}
+              className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white font-bold text-xs px-4 py-1.5 rounded-sm transition flex items-center gap-1.5 cursor-pointer shadow-sm"
             >
               <CheckCircle2 className="w-3.5 h-3.5" /> Save to My Resumes
             </button>
@@ -543,9 +557,10 @@ export default function ResumeBuilder({
                 </button>
                 <button
                   onClick={handleSaveToDashboard}
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs py-2.5 rounded-sm transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+                  disabled={isSaving}
+                  className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white font-bold text-xs py-2.5 rounded-sm transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
                 >
-                  <FileCheck className="w-4 h-4" /> Save Tailored Resume
+                  <FileCheck className="w-4 h-4" /> {isSaving ? "Saving..." : "Save Tailored Resume"}
                 </button>
               </div>
 
