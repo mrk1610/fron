@@ -75,7 +75,9 @@ export default function ResumeBuilder({
 
     const reader = new FileReader();
     reader.onload = () => {
-      const base64String = (reader.result as string).split(",")[1];
+      // Bug #7: split(',')[1] is undefined for malformed data URLs — use fallback to full result
+      const parts = (reader.result as string).split(",");
+      const base64String = parts.length > 1 ? parts[1] : parts[0];
       setUploadedFile({
         name: file.name,
         data: base64String,
@@ -120,12 +122,14 @@ export default function ResumeBuilder({
     setIsGenerating(true);
     setStatusMessage("Ingesting reference job description...");
 
-    // Bug #9: store timeout IDs so they can be cleared if generation finishes early
     const statusTimeouts = [
       setTimeout(() => setStatusMessage("Analyzing Master Resume details..."), 1200),
       setTimeout(() => setStatusMessage("Gemini is matching professional vocabulary keywords..."), 2400),
       setTimeout(() => setStatusMessage("Revising accomplishments with active metrics..."), 3600),
     ];
+
+    // Bug #5: AbortController so fetch is cancelled if component unmounts mid-request
+    const abortController = new AbortController();
 
     try {
       const payload = {
@@ -140,7 +144,8 @@ export default function ResumeBuilder({
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: abortController.signal
       });
 
       // Bug #6: surface the server's actual error message (e.g. rate limit text) instead of generic one
@@ -164,9 +169,11 @@ export default function ResumeBuilder({
         throw new Error(result.error || "Generation payload error");
       }
     } catch (err: any) {
+      // Bug #5: silently discard if the request was aborted (component unmounted)
+      if (err.name === "AbortError") return;
       console.error(err);
       alert(`Adjustment error: ${err.message}. Loading robust simulated tailored draft...`);
-      
+
       // Safety Fallback content if everything fails
       const fallbackResult = {
         ...masterProfile,

@@ -10,11 +10,14 @@ const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 const RATE_LIMIT_MAX = 10;
 const RATE_LIMIT_WINDOW_MS = 60_000;
 
-// Bug #13: use X-Forwarded-For to get real client IP behind a reverse proxy
+// Bug #2: use x-real-ip (trusted) or the LAST X-Forwarded-For entry — first entry is client-spoofable
 function getClientIp(req: ReturnType<typeof express>["request"] & { headers: Record<string, string | string[] | undefined>; socket: { remoteAddress?: string } }): string {
+  const realIp = req.headers["x-real-ip"];
+  if (typeof realIp === "string" && realIp) return realIp;
   const forwarded = req.headers["x-forwarded-for"];
-  if (typeof forwarded === "string") {
-    return forwarded.split(",")[0].trim();
+  if (typeof forwarded === "string" && forwarded) {
+    const ips = forwarded.split(",");
+    return ips[ips.length - 1].trim();
   }
   return req.socket.remoteAddress || "unknown";
 }

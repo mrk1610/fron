@@ -8,11 +8,23 @@ const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 const RATE_LIMIT_MAX = 10;
 const RATE_LIMIT_WINDOW_MS = 60_000;
 
-// Bug #3: Use X-Forwarded-For to get real client IP behind Vercel's proxy
+// Bug #9: prune stale entries every 5 minutes to prevent unbounded map growth
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of rateLimitMap) {
+    if (now > entry.resetAt) rateLimitMap.delete(key);
+  }
+}, 5 * 60_000);
+
+// Bug #2: use x-real-ip (Vercel's trusted header) or the LAST entry of X-Forwarded-For
+// (Vercel appends the real IP at the end — taking the first entry is client-spoofable)
 function getClientIp(req: express.Request): string {
+  const realIp = req.headers["x-real-ip"];
+  if (typeof realIp === "string" && realIp) return realIp;
   const forwarded = req.headers["x-forwarded-for"];
-  if (typeof forwarded === "string") {
-    return forwarded.split(",")[0].trim();
+  if (typeof forwarded === "string" && forwarded) {
+    const ips = forwarded.split(",");
+    return ips[ips.length - 1].trim();
   }
   return req.socket.remoteAddress || "unknown";
 }
@@ -72,7 +84,11 @@ app.post("/api/generate-resume", async (req, res) => {
       return res.json({ success: true, data: tailoredProfileNote });
     }
 
-    // Bug #14: Limit input sizes to prevent prompt injection / token abuse
+    // Bug #6: also limit profile size — large profiles blow the Gemini token budget
+    const profileJson = JSON.stringify(profile || {});
+    if (profileJson.length > 60000) {
+      return res.status(400).json({ success: false, error: "Profile is too large. Please reduce the number of entries and try again." });
+    }
     const safeJdText = (jdText || "").slice(0, 10000);
     const safeCustomPrompt = (customPrompt || "").slice(0, 500);
 
@@ -284,7 +300,8 @@ Return your answer strictly in JSON structure:
     res.json({ success: true, suggestions: data.suggestions });
   } catch (error: any) {
     console.error("Gemini analysis error:", error);
-    res.status(500).json({ success: false, error: "Failed to analyze resume" });
+    // Bug #8: surface the real error message instead of a hardcoded generic string
+    res.status(500).json({ success: false, error: error.message || "Failed to analyze resume" });
   }
 });
 

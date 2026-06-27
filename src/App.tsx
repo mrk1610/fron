@@ -103,18 +103,24 @@ export default function App() {
   useEffect(() => {
     // Check for existing session on mount
     // Bug #1: ensure setIsInitializing(false) always runs even if loadUserData throws
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      try {
-        if (session?.user) {
-          setUser(mapUser(session.user));
-          await loadUserData(session.user.id);
+    // Bug #1 (complete fix): also catch outer getSession() rejection so setIsInitializing always fires
+    supabase.auth.getSession()
+      .then(async ({ data: { session } }) => {
+        try {
+          if (session?.user) {
+            setUser(mapUser(session.user));
+            await loadUserData(session.user.id);
+          }
+        } catch (err) {
+          console.error("Failed to load user data on session restore:", err);
+        } finally {
+          setIsInitializing(false);
         }
-      } catch (err) {
-        console.error("Failed to load user data on session restore:", err);
-      } finally {
+      })
+      .catch((err) => {
+        console.error("Failed to get session:", err);
         setIsInitializing(false);
-      }
-    });
+      });
 
     // Listen for future auth changes (sign in, sign out, token refresh)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
@@ -563,8 +569,9 @@ export default function App() {
             <ResumeBuilder
               masterProfile={masterProfile}
               resumes={resumes}
-              onSaveResume={(newRes) => {
-                handleSaveNewResume(newRes);
+              onSaveResume={async (newRes) => {
+                // Bug #4: await so presets are only cleared after a successful DB save
+                await handleSaveNewResume(newRes);
                 setSelectedJobPreset("");
                 setSelectedPromptPreset("");
                 setSelectedGalleryTemplateId("");
